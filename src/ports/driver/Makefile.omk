@@ -1,0 +1,3 @@
+# -*- makefile -*-
+
+SUBDIRS = lpc_emac

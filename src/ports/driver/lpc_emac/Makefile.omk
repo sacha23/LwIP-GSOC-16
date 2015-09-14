@@ -1,0 +1,27 @@
+# -*- makefile -*-
+
+config_include_HEADERS = netif/emac_config.h
+# max.frag.size (def.1536)
+emac_config_DEFINES += CONFIG_EMAC_PKT_FRAG_SIZE
+# max.eth.frame size (def.1536)
+emac_config_DEFINES += CONFIG_EMAC_ETH_FRAME_SIZE
+
+# number of EMAC RX fragments (def. 4 -> Rx 6kB )
+emac_config_DEFINES += CONFIG_EMAC_NUM_RX_FRAGS
+# number of EMAC TX fragments (def. 2 -> Tx 3kB )
+emac_config_DEFINES += CONFIG_EMAC_NUM_TX_FRAGS
+# base address for Rx Descriptors/Statuses
+emac_config_DEFINES += CONFIG_EMAC_RX_DESC_BASE
+# base address for Tx Descriptors
+emac_config_DEFINES += CONFIG_EMAC_TX_DESC_BASE
+# base address for Rx Data Buffers
+emac_config_DEFINES += CONFIG_EMAC_RX_DATABUF_BASE
+# base address for Tx Data Buffers
+emac_config_DEFINES += CONFIG_EMAC_TX_DATABUF_BASE
+
+renamed_include_HEADERS += lpc_emac.h->netif/lpc_emac.h
+renamed_include_HEADERS += lwip-lpc.h->arch/lwip-lpc.h
+
+# add to lwip library
+lib_LIBRARIES = lwip
+lwip_SOURCES += lpc17xx_netif.c

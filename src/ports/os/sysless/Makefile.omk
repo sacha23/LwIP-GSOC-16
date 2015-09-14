@@ -1,0 +1,3 @@
+# -*- makefile -*-
+
+nobase_include_HEADERS += arch/cc.h arch/perf.h
