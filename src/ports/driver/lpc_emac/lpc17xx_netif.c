@@ -14,16 +14,16 @@
 #include "netif/lpc_emac.h"
 #include "netif/emac_config.h"
 
-// workaround for different definitions of peripherals in LPCxxxx.h
-//#ifndef LPC_EMAC
-//  #define LPC_EMAC    EMAC
-//#endif
-//#ifndef LPC_SC
-//  #define LPC_SC      SC
-//#endif
-//#ifndef LPC_PINCON
-//  #define LPC_PINCON  PINCON
-//#endif
+/* workaround for different definitions of peripherals in LPCxxxx.h */
+#ifndef LPC_EMAC
+  #define LPC_EMAC    EMAC
+#endif
+#ifndef LPC_SC
+  #define LPC_SC      SC
+#endif
+#if !defined(LPC_PINCON) && defined(PINCON)
+  #define LPC_PINCON  PINCON
+#endif
 
 
 /* EMAC Packet Buffer Sizes and Placement */
@@ -111,14 +111,14 @@ static void write_PHY(int PhyReg, int Value)
 {
   unsigned int tout;
 
-  EMAC->MCMD = 0;
-  EMAC->MADR = DP83848C_DEF_ADR | PhyReg;
-  EMAC->MWTD = Value;
+  LPC_EMAC->MCMD = 0;
+  LPC_EMAC->MADR = DP83848C_DEF_ADR | PhyReg;
+  LPC_EMAC->MWTD = Value;
 
   /* Wait utill operation completed */
   tout = 0;
   for (tout = 0; tout < EMAC_MII_TIMEOUT_WR; tout++) {
-    if ((EMAC->MIND & EMAC_MIND_BUSY) == 0) {
+    if ((LPC_EMAC->MIND & EMAC_MIND_BUSY) == 0) {
         break;
     }
   }
@@ -128,18 +128,18 @@ static unsigned short read_PHY(unsigned char PhyReg)
 {
   unsigned int tout;
 
-  EMAC->MCMD = EMAC_MCMD_READ;
-  EMAC->MADR = DP83848C_DEF_ADR | PhyReg;
+  LPC_EMAC->MCMD = EMAC_MCMD_READ;
+  LPC_EMAC->MADR = DP83848C_DEF_ADR | PhyReg;
 
   /* Wait until operation completed */
   tout = 0;
   for (tout = 0; tout < EMAC_MII_TIMEOUT_RD; tout++) {
-    if ((EMAC->MIND & EMAC_MIND_BUSY) == 0) {
+    if ((LPC_EMAC->MIND & EMAC_MIND_BUSY) == 0) {
       break;
     }
   }
-  EMAC->MCMD = 0;
-  return (EMAC->MRDD);
+  LPC_EMAC->MCMD = 0;
+  return (LPC_EMAC->MRDD);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -155,12 +155,12 @@ static void rx_descr_init(void)
   }
 
   /* Set EMAC Receive Descriptor Registers. */
-  EMAC->RxDescriptor       = EMAC_RX_DESC_BASE;
-  EMAC->RxStatus           = (uint32_t)EMAC_RX_STATUS(0);
-  EMAC->RxDescriptorNumber = EMAC_NUM_RX_FRAG - 1;
+  LPC_EMAC->RxDescriptor       = EMAC_RX_DESC_BASE;
+  LPC_EMAC->RxStatus           = (uint32_t)EMAC_RX_STATUS(0);
+  LPC_EMAC->RxDescriptorNumber = EMAC_NUM_RX_FRAG - 1;
 
   /* Rx Descriptors Point to 0 */
-  EMAC->RxConsumeIndex  = 0;
+  LPC_EMAC->RxConsumeIndex  = 0;
 }
 
 static void tx_descr_init(void)
@@ -174,12 +174,12 @@ static void tx_descr_init(void)
   }
 
   /* Set EMAC Transmit Descriptor Registers. */
-  EMAC->TxDescriptor       = EMAC_TX_DESC_BASE;
-  EMAC->TxStatus           = (uint32_t)EMAC_TX_STATUS(0);
-  EMAC->TxDescriptorNumber = EMAC_NUM_TX_FRAG - 1;
+  LPC_EMAC->TxDescriptor       = EMAC_TX_DESC_BASE;
+  LPC_EMAC->TxStatus           = (uint32_t)EMAC_TX_STATUS(0);
+  LPC_EMAC->TxDescriptorNumber = EMAC_NUM_TX_FRAG - 1;
 
   /* Tx Descriptors Point to 0 */
-  EMAC->TxProduceIndex  = 0;
+  LPC_EMAC->TxProduceIndex  = 0;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -216,30 +216,32 @@ static int low_level_init(struct netif *netif)
   uint32_t regv,tout,id1,id2;
 
   /* Power Up the EMAC controller. */
-  SC->PCONP |= 0x40000000;
+  LPC_SC->PCONP |= 0x40000000;
   /* Enable P1 Ethernet Pins. */
   /* on rev. 'A' and later, P1.6 should NOT be set. */
-  PINCON->PINSEL2 = 0x50150105;
+ #ifdef LPC_PINCON
+  LPC_PINCON->PINSEL2 = 0x50150105;
 
-  PINCON->PINSEL3 = (PINCON->PINSEL3 & ~0x0000000F) | 0x00000005;
+  LPC_PINCON->PINSEL3 = (LPC_PINCON->PINSEL3 & ~0x0000000F) | 0x00000005;
+ #endif /*LPC_PINCON*/
 
   /* Reset all EMAC internal modules. */
-  EMAC->MAC1 = EMAC_MAC1_RST_TX | EMAC_MAC1_RST_MCS_TX | EMAC_MAC1_RST_RX | EMAC_MAC1_RST_MCS_RX | EMAC_MAC1_SIM_RST | EMAC_MAC1_SOFT_RST;
-  EMAC->Command = EMAC_CMD_REG_RST | EMAC_CMD_TX_RST | EMAC_CMD_RX_RST | EMAC_CMD_PASS_RUNT_FRM;
+  LPC_EMAC->MAC1 = EMAC_MAC1_RST_TX | EMAC_MAC1_RST_MCS_TX | EMAC_MAC1_RST_RX | EMAC_MAC1_RST_MCS_RX | EMAC_MAC1_SIM_RST | EMAC_MAC1_SOFT_RST;
+  LPC_EMAC->Command = EMAC_CMD_REG_RST | EMAC_CMD_TX_RST | EMAC_CMD_RX_RST | EMAC_CMD_PASS_RUNT_FRM;
 
   /* A short delay after reset. */
   for (tout = 100; tout; tout--);
 
   /* Initialize MAC control registers. */
-  EMAC->MAC1 = EMAC_MAC1_PASS_ALL;
-  EMAC->MAC2 = EMAC_MAC2_CRC_ENB | EMAC_MAC2_PAD_ENB;
+  LPC_EMAC->MAC1 = EMAC_MAC1_PASS_ALL;
+  LPC_EMAC->MAC2 = EMAC_MAC2_CRC_ENB | EMAC_MAC2_PAD_ENB;
 
-  EMAC->MAXF = netif->mtu; // ETH_MAX_FLEN;
-  EMAC->CLRT = EMAC_CLRT_RESET_VALUE;
-  EMAC->IPGR = EMAC_IPGR_RECOMMENDED;
+  LPC_EMAC->MAXF = netif->mtu; // ETH_MAX_FLEN;
+  LPC_EMAC->CLRT = EMAC_CLRT_RESET_VALUE;
+  LPC_EMAC->IPGR = EMAC_IPGR_RECOMMENDED;
 
   /* Enable Reduced MII interface. */
-  EMAC->Command = EMAC_CMD_RMII | EMAC_CMD_PASS_RUNT_FRM;
+  LPC_EMAC->Command = EMAC_CMD_RMII | EMAC_CMD_PASS_RUNT_FRM;
 
 // PHY
   /* Put the DP83848C in reset mode */
@@ -285,44 +287,44 @@ static int low_level_init(struct netif *netif)
   /* Configure Full/Half Duplex mode. */
   if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) {
     /* Full duplex is enabled. */
-    EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
-    EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
-    EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
+    LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
+    LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
+    LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
   } else {
     /* Half duplex mode. */
-    EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+    LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
   }
 
   /* Configure 100MBit/10MBit mode. */
   if (regv & DP83848X_PHYSTS_SPEED_STATUS) {
     /* 10MBit mode. */
-    EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
+    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
   } else {
     /* 100MBit mode. */
-    EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
   }
 
   /* Set the Ethernet MAC Address registers */
-  EMAC->SA0 = ((u16_t)netif->hwaddr[5] << 8) | (u16_t)netif->hwaddr[4];
-  EMAC->SA1 = ((u16_t)netif->hwaddr[3] << 8) | (u16_t)netif->hwaddr[2];
-  EMAC->SA2 = ((u16_t)netif->hwaddr[1] << 8) | (u16_t)netif->hwaddr[0];
+  LPC_EMAC->SA0 = ((u16_t)netif->hwaddr[5] << 8) | (u16_t)netif->hwaddr[4];
+  LPC_EMAC->SA1 = ((u16_t)netif->hwaddr[3] << 8) | (u16_t)netif->hwaddr[2];
+  LPC_EMAC->SA2 = ((u16_t)netif->hwaddr[1] << 8) | (u16_t)netif->hwaddr[0];
 
   /* Initialize Tx and Rx DMA Descriptors */
   rx_descr_init ();
   tx_descr_init ();
 
   /* Receive Broadcast and Perfect Match Packets */
-  EMAC->RxFilterCtrl = EMAC_RFC_BROADCAST_ENB | EMAC_RFC_PERFECT_ENB;
+  LPC_EMAC->RxFilterCtrl = EMAC_RFC_BROADCAST_ENB | EMAC_RFC_PERFECT_ENB;
 
   /* Enable EMAC interrupts. */
-  EMAC->IntEnable = EMAC_INT_RX_DONE | EMAC_INT_TX_DONE;
+  LPC_EMAC->IntEnable = EMAC_INT_RX_DONE | EMAC_INT_TX_DONE;
 
   /* Reset all interrupts */
-  EMAC->IntClear  = ~0;
+  LPC_EMAC->IntClear  = ~0;
 
   /* Enable receive and transmit mode of MAC Ethernet core */
-  EMAC->Command  |= (EMAC_CMD_RX_ENB | EMAC_CMD_TX_ENB);
-  EMAC->MAC1     |= EMAC_MAC1_RCV_ENB;
+  LPC_EMAC->Command  |= (EMAC_CMD_RX_ENB | EMAC_CMD_TX_ENB);
+  LPC_EMAC->MAC1     |= EMAC_MAC1_RCV_ENB;
 
   return 0;
 }
@@ -352,7 +354,7 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
   unsigned char *piSource;
   unsigned short TxLen = 0;
 
-  volatile unsigned int idx = EMAC->TxProduceIndex;
+  volatile unsigned int idx = LPC_EMAC->TxProduceIndex;
   unsigned char *tptr = (unsigned char *)EMAC_TX_DESCRIPTOR(idx)->ptrpktbuff;
   EMAC_TX_DESCRIPTOR(idx)->control = (p->tot_len & EMAC_TXCTRL_SIZE) | EMAC_TXCTRL_LAST;
   
@@ -375,9 +377,9 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
 
 //  signal that packet should be sent();
 // finishing
-  idx = EMAC->TxProduceIndex;
+  idx = LPC_EMAC->TxProduceIndex;
   if (++idx == EMAC_NUM_TX_FRAG) idx = 0;
-  EMAC->TxProduceIndex = idx;
+  LPC_EMAC->TxProduceIndex = idx;
 
 #if ETH_PAD_SIZE
   pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
@@ -404,9 +406,9 @@ static struct pbuf *low_level_input(struct netif *netif)
 
   /* Obtain the size of the packet and put it into the "len"
      variable. */
-  volatile unsigned int idx = EMAC->RxConsumeIndex;
+  volatile unsigned int idx = LPC_EMAC->RxConsumeIndex;
 
-  if (EMAC->RxProduceIndex == idx) { // no new packet received ?
+  if (LPC_EMAC->RxProduceIndex == idx) { // no new packet received ?
     len = 0;
     return NULL;
   } else {
@@ -451,9 +453,9 @@ static struct pbuf *low_level_input(struct netif *netif)
       }
     }
 //    acknowledge that packet has been read();
-    idx = EMAC->RxConsumeIndex;
+    idx = LPC_EMAC->RxConsumeIndex;
     if (++idx == EMAC_NUM_RX_FRAG) idx = 0;
-    EMAC->RxConsumeIndex = idx;
+    LPC_EMAC->RxConsumeIndex = idx;
 
 #if ETH_PAD_SIZE
     pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
