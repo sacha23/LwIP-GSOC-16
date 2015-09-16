@@ -10,6 +10,10 @@ emac_config_DEFINES += CONFIG_EMAC_ETH_FRAME_SIZE
 emac_config_DEFINES += CONFIG_EMAC_NUM_RX_FRAGS
 # number of EMAC TX fragments (def. 2 -> Tx 3kB )
 emac_config_DEFINES += CONFIG_EMAC_NUM_TX_FRAGS
+
+# specify memory section for descriptors allocation
+emac_config_DEFINES += CONFIG_EMAC_DESC_SECTION
+
 # base address for Rx Descriptors/Statuses
 emac_config_DEFINES += CONFIG_EMAC_RX_DESC_BASE
 # base address for Tx Descriptors

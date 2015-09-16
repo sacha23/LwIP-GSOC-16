@@ -51,6 +51,7 @@
   #define EMAC_NUM_TX_FRAG    2
 #endif
 
+#ifndef CONFIG_EMAC_DESC_SECTION
 /* placement of Rx descriptors. Required space = NUM_RX_FRAGS*(sizeof(emac_rx_descriptor_t)+sizeof(emac_rx_status_t)) */
 #ifdef CONFIG_EMAC_RX_DESC_BASE
   #define EMAC_RX_DESC_BASE   CONFIG_EMAC_RX_DESC_BASE
@@ -76,7 +77,21 @@
 #else
   #define EMAC_TX_DBUF_BASE   (EMAC_RX_DBUF_BASE + EMAC_NUM_RX_FRAG*EMAC_FRAG_SIZE)
 #endif
+#else /*CONFIG_EMAC_DESC_SECTION*/
+  /* Allocate memory from specified section */
+  #define EMAC_DESC_ATTR  \
+            __attribute__((section(CONFIG_EMAC_DESC_SECTION))) \
+            __attribute__((aligned(8)))
 
+  uint8_t lpc_emac_rx_desc[EMAC_NUM_RX_FRAG*(sizeof(emac_rx_descriptor_t)+sizeof(emac_rx_status_t))] EMAC_DESC_ATTR;
+  #define EMAC_RX_DESC_BASE   ((uintptr_t)lpc_emac_rx_desc)
+  uint8_t lpc_emac_tx_desc[EMAC_NUM_TX_FRAG*(sizeof(emac_tx_descriptor_t)+sizeof(emac_tx_status_t))] EMAC_DESC_ATTR;
+  #define EMAC_TX_DESC_BASE   ((uintptr_t)lpc_emac_tx_desc)
+  uint8_t lpc_emac_rx_dbuf[EMAC_NUM_RX_FRAG*EMAC_FRAG_SIZE] EMAC_DESC_ATTR;
+  #define EMAC_RX_DBUF_BASE   ((uintptr_t)lpc_emac_rx_dbuf)
+  uint8_t lpc_emac_tx_dbuf[EMAC_NUM_TX_FRAG*EMAC_FRAG_SIZE] EMAC_DESC_ATTR;
+  #define EMAC_TX_DBUF_BASE   ((uintptr_t)lpc_emac_tx_dbuf)
+#endif /*CONFIG_EMAC_DESC_SECTION*/
 
 /* Macros for obtaining addresses of buffers and descriptors. */
 #define EMAC_RX_DESCRIPTOR(i)   ((emac_rx_descriptor_t *)(EMAC_RX_DESC_BASE + i*sizeof(emac_rx_descriptor_t)))
