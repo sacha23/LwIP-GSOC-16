@@ -1,6 +1,12 @@
 # -*- makefile -*-
 
-SUBDIRS = sysless
+default_CONFIG += CONFIG_LWIP_OS_PORT=x
+
+ifeq ($(CONFIG_LWIP_OS_PORT),)
+CONFIG_LWIP_OS_PORT = sysless
+endif
+
+SUBDIRS = $(CONFIG_LWIP_OS_PORT)
 
 nobase_include_HEADERS += lwipopts.h
 

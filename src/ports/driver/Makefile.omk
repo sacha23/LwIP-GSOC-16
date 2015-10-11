@@ -1,3 +1,5 @@
 # -*- makefile -*-
 
-SUBDIRS = lpc_emac
+default_CONFIG += CONFIG_LWIP_DEVICE_DRIVERS=x
+
+SUBDIRS = $(CONFIG_LWIP_DEVICE_DRIVERS)
