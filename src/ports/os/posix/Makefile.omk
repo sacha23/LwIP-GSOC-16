@@ -1,0 +1,6 @@
+# -*- makefile -*-
+
+nobase_include_HEADERS += arch/cc.h arch/perf.h arch/sys_arch.h
+
+lib_LIBRARIES += lwip
+lwip_SOURCES += arch/sys_arch.c
