@@ -42,6 +42,7 @@
 #include <rtems/rtems/sem.h>
 #include <rtems/rtems/intr.h>
 #include <bsp/irq-generic.h>
+#include "arch/eth_lwip_default.h"
 
 /* Typedefs for the various port-specific types. */
 #if defined(NO_SYS) && NO_SYS
@@ -112,6 +113,11 @@ static inline void
 sys_arch_unprotect(sys_prot_t pval)
 {
   rtems_interrupt_enable(pval);
+}
+
+static inline void
+sys_arch_data_sync_barier(void){
+  _ARM_Data_synchronization_barrier();
 }
 
 #endif /* __ARCH_SYS_ARCH_H__ */

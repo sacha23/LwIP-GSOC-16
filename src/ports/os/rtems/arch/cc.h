@@ -43,6 +43,10 @@
 #include <rtems/malloc.h>  /*printk*/
 #include <inttypes.h>
 #include <malloc.h>
+#include <sys/time.h>
+#include <rtems.h>
+#include <sys/errno.h>
+
 
 /* This file must either include a system-local <errno.h> which defines
    the standard *nix error codes, or it should #define LWIP_PROVIDE_ERRNO
