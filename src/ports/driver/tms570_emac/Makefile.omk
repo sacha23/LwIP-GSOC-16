@@ -1,0 +1,12 @@
+# -*- makefile -*-
+
+#config_include_HEADERS = netif/emac_config.h
+
+#renamed_include_HEADERS += lpc_emac.h->netif/lpc_emac.h
+renamed_include_HEADERS += tms570_netif.h->arch/tms570_netif.h
+renamed_include_HEADERS += eth_lwip.h->arch/eth_lwip.h
+renamed_include_HEADERS += eth_lwip_default.h->arch/eth_lwip_default.h
+
+# add to lwip library
+lib_LIBRARIES = lwip
+lwip_SOURCES += tms570_netif.c phy_dp83848h.c eth_lwip.c
