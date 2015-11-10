@@ -41,7 +41,10 @@
 #include <stdio.h>
 
 /* The lwIP network interface structure for the Ethernet EMAC. */
+#ifndef MAX_EMAC_INSTANCE
 #define MAX_EMAC_INSTANCE           1
+#endif /*MAX_EMAC_INSTANCE*/
+
 #define SUCCESS ERR_OK
 #define FAILURE ERR_IF
 
@@ -122,6 +125,8 @@ eth_lwip_get_netif_status_cmd(int argc, char *arg[])
 struct netif *
 eth_lwip_get_netif(uint32_t instance_number)
 {
+  if (instance_number >= MAX_EMAC_INSTANCE)
+    return NULL;
   return &eth_lwip_netifs[instance_number];
 }
 
