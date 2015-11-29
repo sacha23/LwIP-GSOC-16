@@ -72,6 +72,14 @@
 /* take in account oversized frames */
 #define MAX_TRANSFER_UNIT           1500
 
+#ifndef TMS570_MMR_SELECT_GMII_SEL
+  #define TMS570_MMR_SELECT_GMII_SEL TMS570_BALL_XX_GMII_SEL
+#endif
+
+#ifndef TMS570_BALL_K19_MII_RXCLK
+  #define TMS570_BALL_K19_MII_RXCLK TMS570_BALL_K19_MII_RX_CLK
+#endif
+
 /* WARNING!
  * Be very carefull when setting this value. We have to keep in mind
  * that pbuf_alloc(..., PBUF_POOL) will usualy return a chain of PBUFs
@@ -329,12 +337,12 @@ tms570_eth_init_set_pinmux(void)
   tms570_bsp_pin_set_function(TMS570_BALL_G19_MII_RXD_2, TMS570_PIN_FNC_AUTO);
   tms570_bsp_pin_set_function(TMS570_BALL_A14_MII_RXD_1, TMS570_PIN_FNC_AUTO);
   tms570_bsp_pin_set_function(TMS570_BALL_P1_MII_RXD_0, TMS570_PIN_FNC_AUTO);
-  tms570_bsp_pin_set_function(TMS570_BALL_K19_MII_RX_CLK, TMS570_PIN_FNC_AUTO);
+  tms570_bsp_pin_set_function(TMS570_BALL_K19_MII_RXCLK, TMS570_PIN_FNC_AUTO);
   tms570_bsp_pin_set_function(TMS570_BALL_N19_MII_RX_ER, TMS570_PIN_FNC_AUTO);
   tms570_bsp_pin_set_function(TMS570_BALL_B11_MII_RX_DV, TMS570_PIN_FNC_AUTO);
   tms570_bsp_pin_set_function(TMS570_BALL_B4_MII_CRS, TMS570_PIN_FNC_AUTO);
   tms570_bsp_pin_set_function(TMS570_BALL_F3_MII_COL, TMS570_PIN_FNC_AUTO);
-  tms570_bsp_pin_clear_function(TMS570_BALL_XX_GMII_SEL, TMS570_PIN_FNC_AUTO);
+  tms570_bsp_pin_clear_function(TMS570_MMR_SELECT_GMII_SEL, TMS570_PIN_FNC_AUTO);
 
   TMS570_IOMM.KICK_REG0 = 0;
   TMS570_IOMM.KICK_REG1 = 0;
