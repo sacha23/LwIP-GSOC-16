@@ -14,6 +14,8 @@
 #include "netif/lpc_emac.h"
 #include "netif/emac_config.h"
 
+#include <stdlib.h>
+
 /* workaround for different definitions of peripherals in LPCxxxx.h */
 #ifndef LPC_EMAC
   #define LPC_EMAC    EMAC
@@ -110,16 +112,19 @@
 #define IFNAME0 'l'
 #define IFNAME1 'e'
 
+/* -------------------------------------------------------------------------- */
 /**
  * Helper struct to hold private data used to operate your ethernet interface.
  * Keeping the ethernet address of the MAC in this struct is not necessary
  * as it is already kept in the struct netif.
  * But this is only an example, anyway...
  */
-//struct lpc_netif_data {
-  //struct eth_addr *ethaddr;
+struct lpc_netif_data {
+  struct eth_addr ethaddr;
   ///* Add whatever per-interface state that is needed here. */
-//};
+  unsigned char hwaddr[6];
+  int lastlinkstate;
+};
 
 /*---------------------------------------------------------------------------*/
 static void write_PHY(int PhyReg, int Value)
@@ -155,6 +160,17 @@ static unsigned short read_PHY(unsigned char PhyReg)
   }
   LPC_EMAC->MCMD = 0;
   return (LPC_EMAC->MRDD);
+}
+
+/* LPC 1768 (and also probably others) updates EMAC->MIND.LinkFail only if
+ * PHY status register is read. Therefore the PHY status register will be
+ * continuously scanned. Otherwise it should be read before checking MIND reg.
+ */
+static void scan_PHY_status(void)
+{
+  LPC_EMAC->MCFG &= ~EMAC_MCFG_SCAN_INC;
+  LPC_EMAC->MCMD = EMAC_MCMD_SCAN;
+  LPC_EMAC->MADR = DP83848C_DEF_ADR | DP83848X_REG_BMSR;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -198,6 +214,47 @@ static void tx_descr_init(void)
 }
 
 /*---------------------------------------------------------------------------*/
+static int low_level_reinit(void)
+{
+  uint32_t regv = 0;
+  volatile uint32_t tcnt;
+
+//printf("REINIT ETH+PHY\n");
+  
+  // read PHY-PHYSTS and check if AutoNegotiation is complete
+  for (tcnt = 0; tcnt < 1000; ++tcnt) {
+    regv = read_PHY(DP83848X_REG_PHYSTS);
+    if (regv & DP83848X_PHYSTS_AN_COMPLETE) break;
+  }
+  if (!(regv & DP83848X_PHYSTS_AN_COMPLETE)) {
+//printf(" ! PHY AutoNeg. not complete.\n");
+    scan_PHY_status();
+    return -1;
+  }
+//printf("  PHY.PHYSTS = 0x%08lX\n", regv);
+
+  /* Configure Full/Half Duplex mode. */
+  if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) { /* Full duplex is enabled. */
+    EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
+    EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
+    EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
+  } else {                                    /* Half duplex mode. */
+    EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
+    EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
+    EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+  }
+  /* Configure 100MBit/10MBit mode. */
+  if (regv & DP83848X_PHYSTS_SPEED_STATUS)  /* 10MBit mode. */
+    EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
+  else                                      /* 100MBit mode. */
+    EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+
+//printf("+++  HW init done\n");
+  scan_PHY_status();
+  return 0;
+}
+
+
 /**
  * In this function, the hardware should be initialized.
  * Called from ethernetif_init().
@@ -207,18 +264,16 @@ static void tx_descr_init(void)
  */
 static int low_level_init(struct netif *netif)
 {
+  int rc = -1;
   int i;
-
-//  struct lpcnetif *lpcnetif = netif->state;
-  unsigned char *ha = (unsigned char *) netif->state;
-  if (ha==NULL) return -1;
+  struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
   
   /* set MAC hardware address length */
   netif->hwaddr_len = ETHARP_HWADDR_LEN;
 
   /* set MAC hardware address */
   for (i = 0; i < netif->hwaddr_len; i++)
-    netif->hwaddr[i] = *(ha+i);
+    netif->hwaddr[i] = ldata->ethaddr.addr[i];
 
   /* maximum transfer unit */
   netif->mtu = 1500;
@@ -228,7 +283,8 @@ static int low_level_init(struct netif *netif)
   netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
  
   /* Do whatever else is needed to initialize interface. */  
-  uint32_t regv,tout,id1,id2;
+  uint32_t regv, id1, id2;
+  volatile uint32_t tout;
 
   /* Power Up the EMAC controller. */
   LPC_SC->PCONP |= 0x40000000;
@@ -258,65 +314,36 @@ static int low_level_init(struct netif *netif)
   /* Enable Reduced MII interface. */
   LPC_EMAC->Command = EMAC_CMD_RMII | EMAC_CMD_PASS_RUNT_FRM;
 
-// PHY
-  /* Put the DP83848C in reset mode */
-  write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_RESET);
-
-  /* Wait for hardware reset to end. */
-  for (tout = 0; tout < 0x100000; tout++) {
-    regv = read_PHY(DP83848X_REG_BMCR);
-    if (!(regv & DP83848X_BMCR_RESET)) {
-      /* Reset complete */
-      break;
-    }
-  }
-
+/* part for specific PHY */
   /* Check if this is a DP83848C PHY. */
   id1 = read_PHY(DP83848X_REG_PHYIDR1);
   id2 = read_PHY(DP83848X_REG_PHYIDR2);
   if (((id1 << 16) | (id2 & (DP83848X_PHYIDR2_OUI_LSB_MASK|DP83848X_PHYIDR2_VNDR_MDL_MASK))) ==
        (DP83848C_DEF_ID & (0xffff0000 | DP83848X_PHYIDR2_OUI_LSB_MASK | DP83848X_PHYIDR2_VNDR_MDL_MASK))) {
-    /* Configure the PHY device */
+    do {
 
-    /* Use autonegotiation about the link speed. */
-    write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_SPEED_100M | DP83848X_BMCR_ENABLE_AN);
-    /* Wait to complete Auto_Negotiation. */
-    for (tout = 0; tout < 0x100000; tout++) {
-      regv = read_PHY(DP83848X_REG_BMSR);
-      if (regv & DP83848X_BMSR_AN_COMPLETE) {
-        /* Autonegotiation Complete. */
-        break;
+      /* Put the DP83848C in reset mode */
+      write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_RESET);
+
+      /* Wait for hardware reset to end. */
+      for (tout = 0; tout < 0x10000; tout++) {
+        regv = read_PHY(DP83848X_REG_BMCR);
+        if (!(regv & DP83848X_BMCR_RESET)) /* Check if reset is complete */
+          break;
       }
-    }
-  }
+      if (regv & DP83848X_BMCR_RESET) break; /* still in RESET - skip EMAC init */
 
-  /* Check the link status. */
-  for (tout = 0; tout < 0x10000; tout++) {
-    regv = read_PHY(DP83848X_REG_PHYSTS);
-    if (regv & DP83848X_PHYSTS_LINK_STATUS) {
-      /* Link is on. */
-      break;
-    }
-  }
+      /* Use autonegotiation about the link speed. */
+      write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_SPEED_100M | DP83848X_BMCR_ENABLE_AN);
 
-  /* Configure Full/Half Duplex mode. */
-  if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) {
-    /* Full duplex is enabled. */
-    LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
-    LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
-    LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
-  } else {
-    /* Half duplex mode. */
-    LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
-  }
+      /* Try to wait to complete Auto_Negotiation and initialize EMAC (speed, duplex). */
+      for (tout = 0; tout < 10; ++tout) {
+        rc = low_level_reinit();
+        if (!rc) break; /* AN completed and PHY/EMAC set */
+      }
 
-  /* Configure 100MBit/10MBit mode. */
-  if (regv & DP83848X_PHYSTS_SPEED_STATUS) {
-    /* 10MBit mode. */
-    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
-  } else {
-    /* 100MBit mode. */
-    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+      rc = 0; /* it argues that HW is OK to initiate all other structures */
+    } while(0);
   }
 
   /* Set the Ethernet MAC Address registers */
@@ -341,7 +368,7 @@ static int low_level_init(struct netif *netif)
   LPC_EMAC->Command  |= (EMAC_CMD_RX_ENB | EMAC_CMD_TX_ENB);
   LPC_EMAC->MAC1     |= EMAC_MAC1_RCV_ENB;
 
-  return 0;
+  return rc;
 }
 
 /**
@@ -546,15 +573,25 @@ void lpcnetif_input(struct netif *netif)
  */
 err_t lpcnetif_init(struct netif *netif)
 {
-//  struct lpc_netif_data *lpcnetif_data;
+  struct lpc_netif_data *lpcnetif_data;
 
   LWIP_ASSERT("netif != NULL", (netif != NULL));
     
-  //lpcnetif_data = mem_malloc(sizeof(struct lpc_netif_data));
-  //if (lpcnetif_data == NULL) {
-    //LWIP_DEBUGF(NETIF_DEBUG, ("lpcnetif_init: out of memory\n"));
-    //return ERR_MEM;
-  //}
+  lpcnetif_data = mem_malloc(sizeof(struct lpc_netif_data));
+  if (lpcnetif_data == NULL) {
+    LWIP_DEBUGF(NETIF_DEBUG, ("lpcnetif_init: out of memory\n"));
+    return ERR_MEM;
+  }
+  if (netif->state) { /* state can be set to user HWaddress (MAC) in application level */
+    int i;
+    for (i=0;i<ETHARP_HWADDR_LEN;++i) lpcnetif_data->ethaddr.addr[i] = *((uint8_t *)netif->state +i);
+  } else {            /* or it can be generated */
+    int i;
+    for (i=0;i<ETHARP_HWADDR_LEN;++i) lpcnetif_data->ethaddr.addr[i] = *((uint8_t *)i); /* TODO: get from ResetHandler :) */
+  }
+  lpcnetif_data->lastlinkstate = 0;
+  netif->state = lpcnetif_data;
+
 
 #if LWIP_NETIF_HOSTNAME
   /* Initialize interface hostname */
@@ -583,12 +620,67 @@ err_t lpcnetif_init(struct netif *netif)
 //  lpcnetif_data->ethaddr = (struct eth_addr *)&(netif->hwaddr[0]);
   
   /* initialize the hardware */
-  if (low_level_init(netif))
-    return ERR_VAL;
-  /* remove pointer to initial hwaddress */
-  netif->state = NULL; //lpcnetif_data;
+  if (low_level_init(netif)) {
+    lpcnetif_data->lastlinkstate &= ~0x04; // AN not completed or EMAC not initiated
+    return ERR_IF;
+  }
+  lpcnetif_data->lastlinkstate |= 0x04; // AN completed, EMAC initiated
 
   return ERR_OK;
+}
+
+/**
+ * It should be called if LINK status is changed to GOOD.
+ */
+err_t lpcnetif_re_init(struct netif *netif)
+{
+  struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
+  if (low_level_reinit()) {
+    ldata->lastlinkstate &= ~0x04;
+    return ERR_IF;
+  }
+  ldata->lastlinkstate |= 0x04;
+  return ERR_OK;
+}
+
+/**
+ * check LinkStatus - it returns
+ *     0: link up and OK
+ *    -1: link down
+ *    -2: link switched to down
+ *     1: link up,but not reinitialized
+ *     2: link switched to up
+ */
+int lpcnetif_checklink(struct netif *netif)
+{
+  int rc = -1;
+  struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
+  if (EMAC->MIND & EMAC_MIND_MII_LINK_FAIL) {   /* the actual state of the link - DOWN */
+    if (!(ldata->lastlinkstate & 0x01)) {
+//      printf("~~~ ETH Link is down\n");
+      rc = -2;
+    } else {
+      rc = -1;
+    }
+    ldata->lastlinkstate &= ~0x02; // link is not up
+    ldata->lastlinkstate |= 0x01;  // link is down
+  } else {                                      /* the actual state of the link - UP */
+    if (!(ldata->lastlinkstate & 0x02)) {
+//      printf("~~~ ETH Link is up\n");
+      rc = 2;
+      lpcnetif_re_init(netif); /* try to re-initialize PHY+EMAC */
+    } else {
+      if (ldata->lastlinkstate & 0x04) { /* test if PHY+EMAC is initialized */
+        rc = 0;
+      } else {
+        lpcnetif_re_init(netif); /* PHY+EMAC not initialized - try again */
+        rc = 1;
+      }
+    }
+    ldata->lastlinkstate &= ~0x01; // link is not down
+    ldata->lastlinkstate |= 0x02;  // link is up
+  }
+  return rc;
 }
 
 // -------------------------------------------------------------------------- //
