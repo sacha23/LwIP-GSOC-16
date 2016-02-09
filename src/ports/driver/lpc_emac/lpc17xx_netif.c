@@ -144,7 +144,7 @@ static void write_PHY(int PhyReg, int Value)
   }
 }
 
-static unsigned short read_PHY(unsigned char PhyReg) 
+static unsigned short read_PHY(unsigned char PhyReg)
 {
   unsigned int tout;
 
@@ -219,37 +219,32 @@ static int low_level_reinit(void)
   uint32_t regv = 0;
   volatile uint32_t tcnt;
 
-//printf("REINIT ETH+PHY\n");
-  
-  // read PHY-PHYSTS and check if AutoNegotiation is complete
+  /* read PHY-PHYSTS and check if AutoNegotiation is complete */
   for (tcnt = 0; tcnt < 1000; ++tcnt) {
     regv = read_PHY(DP83848X_REG_PHYSTS);
     if (regv & DP83848X_PHYSTS_AN_COMPLETE) break;
   }
   if (!(regv & DP83848X_PHYSTS_AN_COMPLETE)) {
-//printf(" ! PHY AutoNeg. not complete.\n");
     scan_PHY_status();
     return -1;
   }
-//printf("  PHY.PHYSTS = 0x%08lX\n", regv);
 
   /* Configure Full/Half Duplex mode. */
   if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) { /* Full duplex is enabled. */
-    EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
-    EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
-    EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
+    LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
+    LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
+    LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
   } else {                                    /* Half duplex mode. */
-    EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
-    EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
-    EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+    LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
+    LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
+    LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
   }
   /* Configure 100MBit/10MBit mode. */
   if (regv & DP83848X_PHYSTS_SPEED_STATUS)  /* 10MBit mode. */
-    EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
+    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
   else                                      /* 100MBit mode. */
-    EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
 
-//printf("+++  HW init done\n");
   scan_PHY_status();
   return 0;
 }
@@ -267,7 +262,7 @@ static int low_level_init(struct netif *netif)
   int rc = -1;
   int i;
   struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
-  
+
   /* set MAC hardware address length */
   netif->hwaddr_len = ETHARP_HWADDR_LEN;
 
@@ -277,12 +272,12 @@ static int low_level_init(struct netif *netif)
 
   /* maximum transfer unit */
   netif->mtu = 1500;
-  
+
   /* device capabilities */
   /* don't set NETIF_FLAG_ETHARP if this device is not an ethernet one */
   netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
- 
-  /* Do whatever else is needed to initialize interface. */  
+
+  /* Do whatever else is needed to initialize interface. */
   uint32_t regv, id1, id2;
   volatile uint32_t tout;
 
@@ -307,7 +302,7 @@ static int low_level_init(struct netif *netif)
   LPC_EMAC->MAC1 = EMAC_MAC1_PASS_ALL;
   LPC_EMAC->MAC2 = EMAC_MAC2_CRC_ENB | EMAC_MAC2_PAD_ENB;
 
-  LPC_EMAC->MAXF = netif->mtu; // ETH_MAX_FLEN;
+  LPC_EMAC->MAXF = netif->mtu; /* ETH_MAX_FLEN; */
   LPC_EMAC->CLRT = EMAC_CLRT_RESET_VALUE;
   LPC_EMAC->IPGR = EMAC_IPGR_RECOMMENDED;
 
@@ -392,14 +387,14 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
 //  struct lpcnetif *lpcnetif = netif->state;
   struct pbuf *q;
 
-//  initiate transfer();
+  /* initiate transfer(); */
   unsigned char *piSource;
   unsigned short TxLen = 0;
 
   volatile unsigned int idx = LPC_EMAC->TxProduceIndex;
   unsigned char *tptr = (unsigned char *)EMAC_TX_DESCRIPTOR(idx)->ptrpktbuff;
   EMAC_TX_DESCRIPTOR(idx)->control = (p->tot_len & EMAC_TXCTRL_SIZE) | EMAC_TXCTRL_LAST;
-  
+
 #if ETH_PAD_SIZE
   pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
 #endif
@@ -408,17 +403,16 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
     /* Send the data from the pbuf to the interface, one pbuf at a
        time. The size of the data in each pbuf is kept in the ->len
        variable. */
-//    send data from(q->payload, q->len);
+   /* send data from(q->payload, q->len); */
     piSource = q->payload;
-    TxLen = q->len;    // round Size up to next even number
+    TxLen = q->len;    /* round Size up to next even number */
     while (TxLen > 0) {
       *tptr++ = *piSource++;
       TxLen--;
     }
   }
 
-//  signal that packet should be sent();
-// finishing
+  /* signal that packet should be sent(); */
   idx = LPC_EMAC->TxProduceIndex;
   if (++idx == EMAC_NUM_TX_FRAG) idx = 0;
   LPC_EMAC->TxProduceIndex = idx;
@@ -426,7 +420,7 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
 #if ETH_PAD_SIZE
   pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
 #endif
-  
+
   LINK_STATS_INC(link.xmit);
 
   return ERR_OK;
@@ -450,11 +444,11 @@ static struct pbuf *low_level_input(struct netif *netif)
      variable. */
   volatile unsigned int idx = LPC_EMAC->RxConsumeIndex;
 
-  if (LPC_EMAC->RxProduceIndex == idx) { // no new packet received ?
+  if (LPC_EMAC->RxProduceIndex == idx) { /* no new packet received ? */
     len = 0;
     return NULL;
   } else {
-// start receiving from EMAC
+    /* start receiving from EMAC */
     len = (EMAC_RX_STATUS(idx)->info & EMAC_RXSTAT_INFO_RXSIZE) - 3;
   }
   unsigned char *rptr = (unsigned char *)EMAC_RX_DESCRIPTOR(idx)->ptrpktbuff;
@@ -467,7 +461,7 @@ static struct pbuf *low_level_input(struct netif *netif)
 
   /* We allocate a pbuf chain of pbufs from the pool. */
   p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
-  
+
   if (p != NULL && len>0) {
 
 #if ETH_PAD_SIZE
@@ -485,16 +479,16 @@ static struct pbuf *low_level_input(struct netif *netif)
        * actually received size. In this case, ensure the tot_len member of the
        * pbuf is the sum of the chained pbuf len members.
        */
-//      read data into(q->payload, q->len);
+      /* read data into(q->payload, q->len); */
       cnt = q->len;
       pout = q->payload;
-      
+
       while(cnt>0) {
         *pout++ = *rptr++;
         cnt--;
       }
     }
-//    acknowledge that packet has been read();
+    /* acknowledge that packet has been read(); */
     idx = LPC_EMAC->RxConsumeIndex;
     if (++idx == EMAC_NUM_RX_FRAG) idx = 0;
     LPC_EMAC->RxConsumeIndex = idx;
@@ -505,12 +499,12 @@ static struct pbuf *low_level_input(struct netif *netif)
 
     LINK_STATS_INC(link.recv);
   } else {
-//    drop packet();
+    /* drop packet(); */
     LINK_STATS_INC(link.memerr);
     LINK_STATS_INC(link.drop);
   }
-//printf("-- packet %p (%d)\r\n", p, len);
-  return p;  
+
+  return p;
 }
 
 /**
@@ -533,7 +527,7 @@ void lpcnetif_input(struct netif *netif)
   if (p == NULL) return;
   /* points to packet payload, which starts with an Ethernet header */
   ethhdr = p->payload;
-//("> lpc-input (etype=0x%04x)\r\n", htons(ethhdr->type));
+
   switch (htons(ethhdr->type)) {
   /* IP or ARP packet? */
   case ETHTYPE_IP:
@@ -576,7 +570,7 @@ err_t lpcnetif_init(struct netif *netif)
   struct lpc_netif_data *lpcnetif_data;
 
   LWIP_ASSERT("netif != NULL", (netif != NULL));
-    
+
   lpcnetif_data = mem_malloc(sizeof(struct lpc_netif_data));
   if (lpcnetif_data == NULL) {
     LWIP_DEBUGF(NETIF_DEBUG, ("lpcnetif_init: out of memory\n"));
@@ -616,15 +610,15 @@ err_t lpcnetif_init(struct netif *netif)
   netif->output_ip6 = ethip6_output;
 #endif /* LWIP_IPV6 */
   netif->linkoutput = low_level_output;
-  
+
 //  lpcnetif_data->ethaddr = (struct eth_addr *)&(netif->hwaddr[0]);
-  
+
   /* initialize the hardware */
   if (low_level_init(netif)) {
-    lpcnetif_data->lastlinkstate &= ~0x04; // AN not completed or EMAC not initiated
+    lpcnetif_data->lastlinkstate &= ~0x04; /* AN not completed or EMAC not initiated */
     return ERR_IF;
   }
-  lpcnetif_data->lastlinkstate |= 0x04; // AN completed, EMAC initiated
+  lpcnetif_data->lastlinkstate |= 0x04; /* AN completed, EMAC initiated */
 
   return ERR_OK;
 }
@@ -655,18 +649,16 @@ int lpcnetif_checklink(struct netif *netif)
 {
   int rc = -1;
   struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
-  if (EMAC->MIND & EMAC_MIND_MII_LINK_FAIL) {   /* the actual state of the link - DOWN */
+  if (LPC_EMAC->MIND & EMAC_MIND_MII_LINK_FAIL) {   /* the actual state of the link - DOWN */
     if (!(ldata->lastlinkstate & 0x01)) {
-//      printf("~~~ ETH Link is down\n");
       rc = -2;
     } else {
       rc = -1;
     }
-    ldata->lastlinkstate &= ~0x02; // link is not up
-    ldata->lastlinkstate |= 0x01;  // link is down
+    ldata->lastlinkstate &= ~0x02; /* link is not up */
+    ldata->lastlinkstate |= 0x01;  /* link is down */
   } else {                                      /* the actual state of the link - UP */
     if (!(ldata->lastlinkstate & 0x02)) {
-//      printf("~~~ ETH Link is up\n");
       rc = 2;
       lpcnetif_re_init(netif); /* try to re-initialize PHY+EMAC */
     } else {
@@ -677,26 +669,31 @@ int lpcnetif_checklink(struct netif *netif)
         rc = 1;
       }
     }
-    ldata->lastlinkstate &= ~0x01; // link is not down
-    ldata->lastlinkstate |= 0x02;  // link is up
+    ldata->lastlinkstate &= ~0x01; /* link is not down */
+    ldata->lastlinkstate |= 0x02;  /* link is up */
   }
   return rc;
 }
 
-// -------------------------------------------------------------------------- //
-//static struct netif lpc_emac_netif;
+/* -------------------------------------------------------------------------- */
+#if 0
+/* Example how to initialize LPC EMAC interface */
+#include <arch/lwip-lpc.h>
 
-//struct netif *init_netif(void)
-//{
-  //static ip_addr_t ipaddr, netmask, gw;
+static struct netif lpc_emac_netif;
 
-  //IP4_ADDR(&gw, 192,168,0,1);
-  //IP4_ADDR(&ipaddr, 192,168,0,2);
-  //IP4_ADDR(&netmask, 255,255,255,0);
+struct netif *init_netif(void)
+{
+  static ip_addr_t ipaddr, netmask, gw;
 
-  //if (netif_add(&lpc_emac_netif, &ipaddr, &netmask, &gw, NULL, lpcnetif_init, ethernet_input)
-      //!= &lpc_emac_netif) {
-    //return NULL;
-  //}
-  //return &lpc_emac_netif;
-//}
+  IP4_ADDR(&gw, 192,168,0,1);
+  IP4_ADDR(&ipaddr, 192,168,0,2);
+  IP4_ADDR(&netmask, 255,255,255,0);
+
+  if (netif_add(&lpc_emac_netif, &ipaddr, &netmask, &gw, NULL, lpcnetif_init, ethernet_input)
+      != &lpc_emac_netif) {
+    return NULL;
+  }
+  return &lpc_emac_netif;
+}
+#endif
