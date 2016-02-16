@@ -342,6 +342,11 @@ static int low_level_init(struct netif *netif)
     phyid = (id1 << 16) | id2;
   }
 
+  for (phydes = lpc_emac_know_phy; phydes->phyid; phydes++) {
+    if (!((phydes->phyid ^ phyid) & ~phydes->maskoutid))
+      break;
+  }
+
   if (phydes->phyid) {
     do {
 
