@@ -16,6 +16,22 @@
 
 #include <stdlib.h>
 
+#ifndef LAN8720_DEF_ID
+#define LAN8720_DEF_ID  0x0007c0f1 /* PHY Identifier (PHYIDR1,PHYIDR2 regs.) */
+#endif
+
+typedef struct {
+  uint32_t phyid;
+  uint32_t maskoutid;
+  uint32_t flags;
+} lpc_emac_know_phy_t;
+
+const static lpc_emac_know_phy_t lpc_emac_know_phy[] = {
+  {DP83848C_DEF_ID, DP83848X_PHYIDR2_MDL_REV_MASK, 0},
+  {LAN8720_DEF_ID,  DP83848X_PHYIDR2_MDL_REV_MASK, 0},
+  {0,  0}
+};
+
 /* workaround for different definitions of peripherals in LPCxxxx.h */
 #ifndef LPC_EMAC
   #define LPC_EMAC    EMAC
@@ -262,6 +278,9 @@ static int low_level_init(struct netif *netif)
   int rc = -1;
   int i;
   struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
+  const lpc_emac_know_phy_t *phydes;
+  uint32_t regv, id1, id2, phyid;
+  volatile uint32_t tout;
 
   /* set MAC hardware address length */
   netif->hwaddr_len = ETHARP_HWADDR_LEN;
@@ -278,8 +297,6 @@ static int low_level_init(struct netif *netif)
   netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
 
   /* Do whatever else is needed to initialize interface. */
-  uint32_t regv, id1, id2;
-  volatile uint32_t tout;
 
   /* Power Up the EMAC controller. */
   LPC_SC->PCONP |= 0x40000000;
@@ -295,6 +312,9 @@ static int low_level_init(struct netif *netif)
   LPC_EMAC->MAC1 = EMAC_MAC1_RST_TX | EMAC_MAC1_RST_MCS_TX | EMAC_MAC1_RST_RX | EMAC_MAC1_RST_MCS_RX | EMAC_MAC1_SIM_RST | EMAC_MAC1_SOFT_RST;
   LPC_EMAC->Command = EMAC_CMD_REG_RST | EMAC_CMD_TX_RST | EMAC_CMD_RX_RST | EMAC_CMD_PASS_RUNT_FRM;
 
+  /* set MDIO clock to be about 2.5 MHz */
+  LPC_EMAC->MCFG = (LPC_EMAC->MCFG & ~EMAC_MCFG_CLK_SEL_MASK) |
+                   EMAC_MCFG_CLK_SEL_DIV36;
   /* A short delay after reset. */
   for (tout = 100; tout; tout--);
 
@@ -311,10 +331,18 @@ static int low_level_init(struct netif *netif)
 
 /* part for specific PHY */
   /* Check if this is a DP83848C PHY. */
-  id1 = read_PHY(DP83848X_REG_PHYIDR1);
-  id2 = read_PHY(DP83848X_REG_PHYIDR2);
-  if (((id1 << 16) | (id2 & (DP83848X_PHYIDR2_OUI_LSB_MASK|DP83848X_PHYIDR2_VNDR_MDL_MASK))) ==
-       (DP83848C_DEF_ID & (0xffff0000 | DP83848X_PHYIDR2_OUI_LSB_MASK | DP83848X_PHYIDR2_VNDR_MDL_MASK))) {
+  phyid = 0;
+  for (i = 4; i > 0; i--) {
+    id1 = read_PHY(DP83848X_REG_PHYIDR1);
+    id2 = read_PHY(DP83848X_REG_PHYIDR2);
+    if (!id1 || !id2 || (id1 == 0xffff) || (id2 == 0xffff))
+      continue;
+    if (((id1 << 16) | id2) == phyid)
+      break;
+    phyid = (id1 << 16) | id2;
+  }
+
+  if (phydes->phyid) {
     do {
 
       /* Put the DP83848C in reset mode */
