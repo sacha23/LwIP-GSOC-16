@@ -39,3 +39,6 @@ typedef uintptr_t          mem_ptr_t;
 /* Plaform specific diagnostic output */
 #define LWIP_PLATFORM_DIAG(vars)	printf vars
 #define LWIP_PLATFORM_ASSERT(flag) do { printf("Halted ASSERT: %s:%d - %s\n", __FILE__, __LINE__, flag); while(1); } while(0)
+
+/* 32-bit random value used by igmp and others */
+#define LWIP_RAND() ((uint32_t)rand())
