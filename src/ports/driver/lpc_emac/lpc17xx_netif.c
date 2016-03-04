@@ -1,3 +1,44 @@
+/**
+ * @file
+ * LPC17xx and LPC40xx network interface driver.
+ *
+ */
+
+/*
+ * Copyright (c) 2015 - 2016 PiKRON s.r.o. and others
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+ * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+ * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+ * OF SUCH DAMAGE.
+ *
+ * This file is part of the lwIP TCP/IP stack.
+ *
+ * Author: Roman Bartosinsky <bartosr@centrum.cz>
+ *         Pavel Pisa <pisa@pikron.com>
+ * code is based on NXP provided examples and application notes
+ * and LwIP examples
+ *
+ */
+
+
 #include "lwip/opt.h"
 
 #include "lwip/def.h"
@@ -13,6 +54,10 @@
 #include "dp83848x_phy.h"
 #include "netif/lpc_emac.h"
 #include "netif/emac_config.h"
+
+#if LWIP_IGMP
+#include "lwip/igmp.h"
+#endif
 
 #include <stdlib.h>
 
@@ -230,6 +275,120 @@ static void tx_descr_init(void)
 }
 
 /*---------------------------------------------------------------------------*/
+
+#if LWIP_IGMP
+
+#define MAC_HASH_BITS 64
+static uint8_t mac_hash_use_count[MAC_HASH_BITS];
+
+/* code based on example from ST forum sourcer32@gmail.com */
+static uint32_t mac_hash_fast(const uint8_t *mac)
+{
+  static const uint8_t rev_crc6_tbl[] = {
+    0x00,0x20,0x10,0x30,0x08,0x28,0x18,0x38,0x04,0x24,0x14,0x34,0x0C,0x2C,0x1C,0x3C,
+    0x02,0x22,0x12,0x32,0x0A,0x2A,0x1A,0x3A,0x06,0x26,0x16,0x36,0x0E,0x2E,0x1E,0x3E,
+    0x01,0x21,0x11,0x31,0x09,0x29,0x19,0x39,0x05,0x25,0x15,0x35,0x0D,0x2D,0x1D,0x3D,
+    0x03,0x23,0x13,0x33,0x0B,0x2B,0x1B,0x3B,0x07,0x27,0x17,0x37,0x0F,0x2F,0x1F,0x3F };
+
+  static const uint32_t crc32_tbl[] = {
+    0x4DBDF21C, 0x500AE278, 0x76D3D2D4, 0x6B64C2B0,
+    0x3B61B38C, 0x26D6A3E8, 0x000F9344, 0x1DB88320,
+    0xA005713C, 0xBDB26158, 0x9B6B51F4, 0x86DC4190,
+    0xD6D930AC, 0xCB6E20C8, 0xEDB71064, 0xF0000000 };
+
+  int i;
+  uint32_t crc;
+
+  crc = 0xffffffff;
+
+  for(i=0; i<6; i++)
+  {
+    crc = crc ^ (uint32_t)mac[i];
+
+    crc = (crc >> 4) ^ crc32_tbl[crc & 0x0F];  /* lower nibble */
+    crc = (crc >> 4) ^ crc32_tbl[crc & 0x0F];  /* upper nibble */
+  }
+
+  //return(rev_crc6_tbl[(crc >> 23) & 0x3F]);
+  return(rev_crc6_tbl[(crc) & 0x3F]);
+  //return (crc >> 3) & 0x3F;
+}
+
+static err_t multicast_ip_to_mac(const ip4_addr_t *ip_addr,
+                                 struct eth_addr *mac_addr)
+{
+  if ((NULL == ip_addr) || (NULL == mac_addr)) {
+    return ERR_ARG;
+  }
+  mac_addr->addr[0] = 0x01;
+  mac_addr->addr[1] = 0x00;
+  mac_addr->addr[2] = 0x5E;
+  mac_addr->addr[3] = ip4_addr2_16(ip_addr) & ~0x80;
+  mac_addr->addr[4] = ip4_addr3_16(ip_addr);
+  mac_addr->addr[5] = ip4_addr4_16(ip_addr);
+
+  return ERR_OK;
+}
+
+/*
+ * Include or remove group address from accepted Rx frames filters
+ *
+ * @param netif network interface
+ * @param group goup address
+ * @param action request one of IGMP_ADD_MAC_FILTER or IGMP_DEL_MAC_FILTER
+ */
+
+static err_t mac_filter(struct netif *netif,
+                        const ip4_addr_t *group, u8_t action)
+{
+  LWIP_DEBUGF(NETIF_DEBUG | LWIP_DBG_STATE,
+                ("lpcnetif: adding group mac filter"));
+
+  /* Receive all frames without filtering */
+  /* LPC_EMAC->Command |= EMAC_CMD_PASS_RX_FLT; */
+
+  /* Receive all multicast frames without HASH filtering */
+  /* LPC_EMAC->RxFilterCtrl |= EMAC_RFC_MULTICAST_ENB; */
+
+  if (1) {
+    struct eth_addr mac_addr;
+    uint32_t hash;
+    uint32_t hasmap_lo = 0;
+    uint32_t hasmap_hi = 0;
+    int i;
+
+    multicast_ip_to_mac(group, &mac_addr);
+    hash = mac_hash_fast(mac_addr.addr);
+
+    if (action == IGMP_ADD_MAC_FILTER) {
+      if (mac_hash_use_count[hash] < 255)
+        mac_hash_use_count[hash]++;
+    } else if (action == IGMP_DEL_MAC_FILTER) {
+      if (mac_hash_use_count[hash])
+        mac_hash_use_count[hash]--;
+    }
+
+    for (i = 0; i < 32; i++)
+      if (mac_hash_use_count[i])
+        hasmap_lo |= 1 << i;
+    for (i = 0; i < 32; i++)
+      if (mac_hash_use_count[i + 32])
+        hasmap_hi |= 1 << i;
+
+    LPC_EMAC->HashFilterL = hasmap_lo;
+    LPC_EMAC->HashFilterH = hasmap_hi;
+
+    /* Receive multicast frames which pass HASH filtering */
+    LPC_EMAC->RxFilterCtrl |= EMAC_RFC_MULTICAST_HASH_ENB;
+  }
+
+  return ERR_OK;
+}
+
+#endif
+
+/*---------------------------------------------------------------------------*/
+
 static int low_level_reinit(void)
 {
   uint32_t regv = 0;
@@ -295,6 +454,11 @@ static int low_level_init(struct netif *netif)
   /* device capabilities */
   /* don't set NETIF_FLAG_ETHARP if this device is not an ethernet one */
   netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
+
+  #if LWIP_IGMP
+  netif->flags |= NETIF_FLAG_IGMP;
+  netif_set_igmp_mac_filter(netif, mac_filter);
+  #endif
 
   /* Do whatever else is needed to initialize interface. */
 
