@@ -52,6 +52,7 @@
 
 #include "LPC17xx.h"
 #include "dp83848x_phy.h"
+#include "lan8720a.h"
 #include "netif/lpc_emac.h"
 #include "netif/emac_config.h"
 
@@ -61,10 +62,6 @@
 
 #include <stdlib.h>
 
-#ifndef LAN8720_DEF_ID
-#define LAN8720_DEF_ID  0x0007c0f1 /* PHY Identifier (PHYIDR1,PHYIDR2 regs.) */
-#endif
-
 typedef struct {
   uint32_t phyid;
   uint32_t maskoutid;
@@ -73,7 +70,7 @@ typedef struct {
 
 const static lpc_emac_know_phy_t lpc_emac_know_phy[] = {
   {DP83848C_DEF_ID, DP83848X_PHYIDR2_MDL_REV_MASK, 0},
-  {LAN8720_DEF_ID,  DP83848X_PHYIDR2_MDL_REV_MASK, 0},
+  {LAN8720A_DEF_ID,  DP83848X_PHYIDR2_MDL_REV_MASK, 0},
   {0,  0}
 };
 
@@ -185,6 +182,7 @@ struct lpc_netif_data {
   ///* Add whatever per-interface state that is needed here. */
   unsigned char hwaddr[6];
   int lastlinkstate;
+  uint32_t phyid; /* ID of the connected/detected PHY */
 };
 
 /*---------------------------------------------------------------------------*/
@@ -389,36 +387,71 @@ static err_t mac_filter(struct netif *netif,
 
 /*---------------------------------------------------------------------------*/
 
-static int low_level_reinit(void)
+static int low_level_reinit(uint32_t phyidx)
 {
   uint32_t regv = 0;
   volatile uint32_t tcnt;
 
   /* read PHY-PHYSTS and check if AutoNegotiation is complete */
-  for (tcnt = 0; tcnt < 1000; ++tcnt) {
-    regv = read_PHY(DP83848X_REG_PHYSTS);
-    if (regv & DP83848X_PHYSTS_AN_COMPLETE) break;
-  }
-  if (!(regv & DP83848X_PHYSTS_AN_COMPLETE)) {
-    scan_PHY_status();
-    return -1;
-  }
+  switch(phyidx) {
+    case DP83848C_DEF_ID:
+      for (tcnt = 0; tcnt < 1000; ++tcnt) {
+        regv = read_PHY(DP83848X_REG_PHYSTS);
+        if (regv & DP83848X_PHYSTS_AN_COMPLETE) break;
+      }
+      if (!(regv & DP83848X_PHYSTS_AN_COMPLETE)) {
+        scan_PHY_status();
+        LWIP_DEBUGF(NETIF_DEBUG, ("PHY autoneg.not completed 0x%lX\n", regv));
+        return -1;
+      }
+      /* Configure Full/Half Duplex mode. */
+      if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) { /* Full duplex is enabled. */
+        LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
+        LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
+        LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
+      } else {                                    /* Half duplex mode. */
+        LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
+        LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
+        LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+      }
+      /* Configure 100MBit/10MBit mode. */
+      if (regv & DP83848X_PHYSTS_SPEED_STATUS)  /* 10MBit mode. */
+        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
+      else                                      /* 100MBit mode. */
+        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+      break;
 
-  /* Configure Full/Half Duplex mode. */
-  if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) { /* Full duplex is enabled. */
-    LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
-    LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
-    LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
-  } else {                                    /* Half duplex mode. */
-    LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
-    LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
-    LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+    case LAN8720A_DEF_ID:
+      for (tcnt = 0; tcnt < 1000; ++tcnt) {
+        regv = read_PHY(LAN8720A_REG_PCSR);
+        if (regv & LAN8720A_PCSR_AUTODONE) break;
+      }
+      if (!(regv & LAN8720A_PCSR_AUTODONE)) {
+        scan_PHY_status();
+        LWIP_DEBUGF(NETIF_DEBUG, ("PHY autoneg.not completed 0x%lX\n", regv));
+        return -1;
+      }
+      /* Configure Full/Half Duplex mode. */
+      if (regv & LAN8720A_PCSR_DUPLEX) { /* Full duplex is enabled. */
+        LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
+        LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
+        LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
+      } else {                                    /* Half duplex mode. */
+        LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
+        LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
+        LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+      }
+      /* Configure 100MBit/10MBit mode. */
+      if (regv & LAN8720A_PCSR_SPEED_10M) {           /* 10MBit mode. */
+        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
+      } else if (regv & LAN8720A_PCSR_SPEED_100M) {   /* 100MBit mode. */
+        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+      }
+      break;
+
+    default:
+      return -2;
   }
-  /* Configure 100MBit/10MBit mode. */
-  if (regv & DP83848X_PHYSTS_SPEED_STATUS)  /* 10MBit mode. */
-    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
-  else                                      /* 100MBit mode. */
-    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
 
   scan_PHY_status();
   return 0;
@@ -494,7 +527,7 @@ static int low_level_init(struct netif *netif)
   LPC_EMAC->Command = EMAC_CMD_RMII | EMAC_CMD_PASS_RUNT_FRM;
 
 /* part for specific PHY */
-  /* Check if this is a DP83848C PHY. */
+  /* Check if this is known PHY. */
   phyid = 0;
   for (i = 4; i > 0; i--) {
     id1 = read_PHY(DP83848X_REG_PHYIDR1);
@@ -507,8 +540,11 @@ static int low_level_init(struct netif *netif)
   }
 
   for (phydes = lpc_emac_know_phy; phydes->phyid; phydes++) {
-    if (!((phydes->phyid ^ phyid) & ~phydes->maskoutid))
+    if (!((phydes->phyid ^ phyid) & ~phydes->maskoutid)) {
+      LWIP_DEBUGF(NETIF_DEBUG, ("Supported PHY (0x%04lX,0x%04lX)\n", id1, id2));
+      ldata->phyid = phyid;
       break;
+    }
   }
 
   if (phydes->phyid) {
@@ -530,7 +566,7 @@ static int low_level_init(struct netif *netif)
 
       /* Try to wait to complete Auto_Negotiation and initialize EMAC (speed, duplex). */
       for (tout = 0; tout < 10; ++tout) {
-        rc = low_level_reinit();
+        rc = low_level_reinit(ldata->phyid);
         if (!rc) break; /* AN completed and PHY/EMAC set */
       }
 
@@ -826,7 +862,7 @@ err_t lpcnetif_init(struct netif *netif)
 err_t lpcnetif_re_init(struct netif *netif)
 {
   struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
-  if (low_level_reinit()) {
+  if (low_level_reinit(ldata->phyid)) {
     ldata->lastlinkstate &= ~0x04;
     return ERR_IF;
   }
