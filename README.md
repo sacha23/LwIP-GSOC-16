@@ -1,2 +1,2 @@
 # LwIP-GSOC-16
-main repo of gsoc'16 work
+     This page contains all the work done during GSOC'16 for RTEMS.
