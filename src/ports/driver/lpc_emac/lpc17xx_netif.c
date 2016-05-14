@@ -74,6 +74,10 @@ const static lpc_emac_know_phy_t lpc_emac_know_phy[] = {
   {0,  0}
 };
 
+#define PHYID_OUI(id)    ((((id>>16) & DP83848X_PHYIDR1_OUI_MSB_MASK)<<16) | (id & DP83848X_PHYIDR2_OUI_LSB_MASK))
+#define PHYID_MDL(id)    (id & DP83848X_PHYIDR2_MDL_REV_MASK)
+#define PHYID_CHIP(id)   ((((id>>16) & DP83848X_PHYIDR1_OUI_MSB_MASK)<<16) | (id & (DP83848X_PHYIDR2_OUI_LSB_MASK | DP83848X_PHYIDR2_MDL_REV_MASK)))
+
 /* workaround for different definitions of peripherals in LPCxxxx.h */
 #ifndef LPC_EMAC
   #define LPC_EMAC    EMAC
@@ -181,9 +185,13 @@ struct lpc_netif_data {
   struct eth_addr ethaddr;
   ///* Add whatever per-interface state that is needed here. */
   unsigned char hwaddr[6];
-  int lastlinkstate;
+  uint linkstate;
   uint32_t phyid; /* ID of the connected/detected PHY */
 };
+
+#define LPC_LNKST_DOWN    0x01
+#define LPC_LNKST_UP      0x02
+#define LPC_LNKST_AN      0x04
 
 /*---------------------------------------------------------------------------*/
 static void write_PHY(int PhyReg, int Value)
@@ -386,74 +394,71 @@ static err_t mac_filter(struct netif *netif,
 #endif
 
 /*---------------------------------------------------------------------------*/
-
-static int low_level_reinit(uint32_t phyidx)
+/* low_level_reinit - returns
+ *   -1 if error or no autonegotiation
+ *    0 if all ok and autonegotiation is done
+ *    1 if autonegotiation is running
+ */
+static int low_level_reinit(struct lpc_netif_data *ldata)
 {
   uint32_t regv = 0;
-  volatile uint32_t tcnt;
+//  volatile uint32_t tcnt;
+  int full = 0, s100 = 0;
 
-  /* read PHY-PHYSTS and check if AutoNegotiation is complete */
-  switch(phyidx) {
-    case DP83848C_DEF_ID:
-      for (tcnt = 0; tcnt < 1000; ++tcnt) {
+  regv = read_PHY(DP83848X_REG_BMCR);
+  if (regv & DP83848X_BMCR_ENABLE_AN) {
+    regv = read_PHY(DP83848X_REG_BMSR);
+    if (!(regv & DP83848X_BMSR_AN_ABILITY)) return -1;
+    if (!(regv & DP83848X_BMSR_AN_COMPLETE)) return 1;
+
+    if (!(regv & DP83848X_BMSR_LINK_STATUS)) return 1;
+
+    /* read PHY-PHYSTS and check if AutoNegotiation is complete */
+    switch(PHYID_CHIP(ldata->phyid)) {
+      case PHYID_CHIP(DP83848C_DEF_ID):
         regv = read_PHY(DP83848X_REG_PHYSTS);
-        if (regv & DP83848X_PHYSTS_AN_COMPLETE) break;
-      }
-      if (!(regv & DP83848X_PHYSTS_AN_COMPLETE)) {
-        scan_PHY_status();
-        LWIP_DEBUGF(NETIF_DEBUG, ("PHY autoneg.not completed 0x%lX\n", regv));
-        return -1;
-      }
-      /* Configure Full/Half Duplex mode. */
-      if (regv & DP83848X_PHYSTS_DUPLEX_STATUS) { /* Full duplex is enabled. */
-        LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
-        LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
-        LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
-      } else {                                    /* Half duplex mode. */
-        LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
-        LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
-        LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
-      }
-      /* Configure 100MBit/10MBit mode. */
-      if (regv & DP83848X_PHYSTS_SPEED_STATUS)  /* 10MBit mode. */
-        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
-      else                                      /* 100MBit mode. */
-        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
-      break;
+        if (regv & DP83848X_PHYSTS_DUPLEX_STATUS)   /* Full duplex is enabled. */
+          full = 1;
+        if (!(regv & DP83848X_PHYSTS_SPEED_STATUS)) /* 100MBit mode. */
+          s100 = 1;
+        break;
 
-    case LAN8720A_DEF_ID:
-      for (tcnt = 0; tcnt < 1000; ++tcnt) {
+      case LAN8720A_DEF_ID:
         regv = read_PHY(LAN8720A_REG_PCSR);
-        if (regv & LAN8720A_PCSR_AUTODONE) break;
-      }
-      if (!(regv & LAN8720A_PCSR_AUTODONE)) {
-        scan_PHY_status();
-        LWIP_DEBUGF(NETIF_DEBUG, ("PHY autoneg.not completed 0x%lX\n", regv));
-        return -1;
-      }
-      /* Configure Full/Half Duplex mode. */
-      if (regv & LAN8720A_PCSR_DUPLEX) { /* Full duplex is enabled. */
-        LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
-        LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
-        LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
-      } else {                                    /* Half duplex mode. */
-        LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
-        LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
-        LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
-      }
-      /* Configure 100MBit/10MBit mode. */
-      if (regv & LAN8720A_PCSR_SPEED_10M) {           /* 10MBit mode. */
-        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
-      } else if (regv & LAN8720A_PCSR_SPEED_100M) {   /* 100MBit mode. */
-        LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
-      }
-      break;
+        /* Configure Full/Half Duplex mode. */
+        if (regv & LAN8720A_PCSR_DUPLEX)            /* Full duplex is enabled. */
+          full = 1;
+        if (regv & LAN8720A_PCSR_SPEED_100M)        /* 100MBit mode. */
+          s100 = 1;
+        break;
 
-    default:
-      return -2;
+      default:
+        return -2;
+    }
+    ldata->linkstate &= ~LPC_LNKST_AN;
+  } else { /* no auto-negotiation */
+    if (regv & DP83848X_BMCR_FULLDUPLEX)
+      full = 1;
+    if (regv & DP83848X_BMCR_SPEED_100M)
+      s100 = 1;
+    scan_PHY_status();
   }
 
-  scan_PHY_status();
+  /* Configure Full/Half Duplex mode. */
+  if (full) {                                 /* Full duplex is enabled. */
+    LPC_EMAC->MAC2    |= EMAC_MAC2_FULL_DUPLEX;
+    LPC_EMAC->Command |= EMAC_CMD_FULL_DUPLEX;
+    LPC_EMAC->IPGT     = EMAC_IPGT_FULL_DUP;
+  } else {                                    /* Half duplex mode. */
+    LPC_EMAC->MAC2    &= ~EMAC_MAC2_FULL_DUPLEX;
+    LPC_EMAC->Command &= ~EMAC_CMD_FULL_DUPLEX;
+    LPC_EMAC->IPGT = EMAC_IPGT_HALF_DUP;
+  }
+  /* Configure 100MBit/10MBit mode. */
+  if (s100)                                   /* 100MBit mode. */
+    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_100MBPS;
+  else                                        /* 10MBit mode. */
+    LPC_EMAC->SUPP = EMAC_SUPP_SPEED_10MBPS;
   return 0;
 }
 
@@ -547,47 +552,20 @@ static int low_level_init(struct netif *netif)
     }
   }
 
-  if (phydes->phyid) {
-    do {
-
-      /* Put the DP83848C in reset mode */
-      write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_RESET);
-
-      /* Wait for hardware reset to end. */
-      for (tout = 0; tout < 0x10000; tout++) {
-        regv = read_PHY(DP83848X_REG_BMCR);
-        if (!(regv & DP83848X_BMCR_RESET)) /* Check if reset is complete */
-          break;
-      }
-      if (regv & DP83848X_BMCR_RESET) break; /* still in RESET - skip EMAC init */
-
-      /* Use autonegotiation about the link speed. */
-      write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_SPEED_100M | DP83848X_BMCR_ENABLE_AN);
-
-      /* Try to wait to complete Auto_Negotiation and initialize EMAC (speed, duplex). */
-      for (tout = 0; tout < 10; ++tout) {
-        rc = low_level_reinit(ldata->phyid);
-        if (!rc) break; /* AN completed and PHY/EMAC set */
-      }
-
-      rc = 0; /* it argues that HW is OK to initiate all other structures */
-    } while(0);
-  }
-
   /* Set the Ethernet MAC Address registers */
   LPC_EMAC->SA0 = ((u16_t)netif->hwaddr[5] << 8) | (u16_t)netif->hwaddr[4];
   LPC_EMAC->SA1 = ((u16_t)netif->hwaddr[3] << 8) | (u16_t)netif->hwaddr[2];
   LPC_EMAC->SA2 = ((u16_t)netif->hwaddr[1] << 8) | (u16_t)netif->hwaddr[0];
 
   /* Initialize Tx and Rx DMA Descriptors */
-  rx_descr_init ();
-  tx_descr_init ();
+  rx_descr_init();
+  tx_descr_init();
 
   /* Receive Broadcast and Perfect Match Packets */
   LPC_EMAC->RxFilterCtrl = EMAC_RFC_BROADCAST_ENB | EMAC_RFC_PERFECT_ENB;
 
   /* Enable EMAC interrupts. */
-  LPC_EMAC->IntEnable = EMAC_INT_RX_DONE | EMAC_INT_TX_DONE;
+//  LPC_EMAC->IntEnable = EMAC_INT_RX_DONE | EMAC_INT_TX_DONE;
 
   /* Reset all interrupts */
   LPC_EMAC->IntClear  = ~0;
@@ -595,6 +573,33 @@ static int low_level_init(struct netif *netif)
   /* Enable receive and transmit mode of MAC Ethernet core */
   LPC_EMAC->Command  |= (EMAC_CMD_RX_ENB | EMAC_CMD_TX_ENB);
   LPC_EMAC->MAC1     |= EMAC_MAC1_RCV_ENB;
+
+
+  if (phydes->phyid) {
+    do {
+      /* Put the DP83848C in reset mode */
+      write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_RESET);
+
+      /* Wait for hardware reset to end. */
+      for (tout = 0; tout < 10000; tout++) {
+        regv = read_PHY(DP83848X_REG_BMCR);
+        if (!(regv & DP83848X_BMCR_RESET)) /* Check if reset is complete */
+          break;
+      }
+      if (regv & DP83848X_BMCR_RESET) break; /* still in RESET - skip EMAC init */
+
+      /* Use autonegotiation about the link speed. */
+      write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_ENABLE_AN | DP83848X_BMCR_RESTART_AN);
+
+      /* Try to wait to complete Auto_Negotiation and initialize EMAC (speed, duplex). */
+      for (tout = 0; tout < 10; ++tout) {
+        rc = low_level_reinit(ldata);
+        if (!rc) break; /* AN completed and PHY/EMAC set */
+      }
+
+      rc = 0; /* it argues that HW is OK to initiate all other structures */
+    } while(0);
+  }
 
   return rc;
 }
@@ -816,7 +821,7 @@ err_t lpcnetif_init(struct netif *netif)
     int i;
     for (i=0;i<ETHARP_HWADDR_LEN;++i) lpcnetif_data->ethaddr.addr[i] = *((uint8_t *)i); /* TODO: get from ResetHandler :) */
   }
-  lpcnetif_data->lastlinkstate = 0;
+  lpcnetif_data->linkstate = LPC_LNKST_DOWN;
   netif->state = lpcnetif_data;
 
 
@@ -848,10 +853,8 @@ err_t lpcnetif_init(struct netif *netif)
 
   /* initialize the hardware */
   if (low_level_init(netif)) {
-    lpcnetif_data->lastlinkstate &= ~0x04; /* AN not completed or EMAC not initiated */
     return ERR_IF;
   }
-  lpcnetif_data->lastlinkstate |= 0x04; /* AN completed, EMAC initiated */
 
   return ERR_OK;
 }
@@ -862,11 +865,12 @@ err_t lpcnetif_init(struct netif *netif)
 err_t lpcnetif_re_init(struct netif *netif)
 {
   struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
-  if (low_level_reinit(ldata->phyid)) {
-    ldata->lastlinkstate &= ~0x04;
-    return ERR_IF;
+  uint32_t regv = read_PHY(DP83848X_REG_BMCR);
+  if (regv & DP83848X_BMCR_ENABLE_AN) {
+    write_PHY(DP83848X_REG_BMCR, DP83848X_BMCR_RESTART_AN);
+    ldata->linkstate |= LPC_LNKST_AN;
   }
-  ldata->lastlinkstate |= 0x04;
+  low_level_reinit(ldata);
   return ERR_OK;
 }
 
@@ -882,28 +886,31 @@ int lpcnetif_checklink(struct netif *netif)
 {
   int rc = -1;
   struct lpc_netif_data *ldata = (struct lpc_netif_data *) netif->state;
-  if (LPC_EMAC->MIND & EMAC_MIND_MII_LINK_FAIL) {   /* the actual state of the link - DOWN */
-    if (!(ldata->lastlinkstate & 0x01)) {
+  uint32_t regv = read_PHY(DP83848X_REG_BMSR);
+  if (!(regv & DP83848X_BMSR_LINK_STATUS)) { //  LPC_EMAC->MIND & EMAC_MIND_MII_LINK_FAIL) {   /* the actual state of the link - DOWN */
+    if (!(ldata->linkstate & LPC_LNKST_DOWN)) {
       rc = -2;
     } else {
       rc = -1;
     }
-    ldata->lastlinkstate &= ~0x02; /* link is not up */
-    ldata->lastlinkstate |= 0x01;  /* link is down */
+    ldata->linkstate &= ~LPC_LNKST_UP; /* link is not up */
+    ldata->linkstate |= LPC_LNKST_DOWN;  /* link is down */
   } else {                                      /* the actual state of the link - UP */
-    if (!(ldata->lastlinkstate & 0x02)) {
-      rc = 2;
-      lpcnetif_re_init(netif); /* try to re-initialize PHY+EMAC */
-    } else {
-      if (ldata->lastlinkstate & 0x04) { /* test if PHY+EMAC is initialized */
-        rc = 0;
+    ldata->linkstate &= ~LPC_LNKST_DOWN;
+    if (!(ldata->linkstate & LPC_LNKST_UP)) {
+      if (!(ldata->linkstate & LPC_LNKST_AN)) {
+        rc = 2;
+        lpcnetif_re_init(netif);
       } else {
-        lpcnetif_re_init(netif); /* PHY+EMAC not initialized - try again */
         rc = 1;
       }
+      if (low_level_reinit(ldata)==0) {  /* try to re-initialize PHY+EMAC */
+        ldata->linkstate |= LPC_LNKST_UP;
+        rc = 0;
+      }
+    } else {
+      rc = 0;
     }
-    ldata->lastlinkstate &= ~0x01; /* link is not down */
-    ldata->lastlinkstate |= 0x02;  /* link is up */
   }
   return rc;
 }
